@@ -1,0 +1,100 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - npm-shrinkwrap.json
+      - bin/**
+      - src/**
+      - instructions.md
+      - README.md
+      - LICENSE.md
+  workflow_dispatch:
+
+# Keep releases serialized so two main pushes cannot publish concurrently.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+# npm trusted publishing uses GitHub's short-lived OIDC identity. No npm token
+# is stored in this repository or passed through the workflow.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          node <<'NODE'
+          const [major, minor] = process.versions.node.split('.').map(Number);
+          if (major < 22 || (major === 22 && minor < 14)) {
+            throw new Error('npm trusted publishing requires Node.js 22.14 or newer');
+          }
+          NODE
+
+      - name: Run package checks
+        run: |
+          npm test
+          npm run lint
+          npm run pack:check
+
+      - name: Read package identity
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          printf 'name=%s\n' "$package_name" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already published
+        id: registry
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.package.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --json --fetch-timeout=15000 >/dev/null 2>"$error_file"; then
+            printf 'already_published=true\n' >> "$GITHUB_OUTPUT"
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already on npm; nothing to publish."
+          elif grep -qE 'E404|not found|is not in this registry' "$error_file"; then
+            printf 'already_published=false\n' >> "$GITHUB_OUTPUT"
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is not on npm; publishing it."
+          else
+            cat "$error_file" >&2
+            exit 1
+          fi
+
+      - name: Publish with npm trusted publishing
+        if: steps.registry.outputs.already_published != 'true'
+        run: npm publish --access public
