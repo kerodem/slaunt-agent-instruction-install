@@ -1,5 +1,5 @@
 {
-  "name": "slaunt-agent-instruction-install",
+  "name": "slaunt-install",
   "version": "0.1.0",
   "description": "Append Slaunt agent instructions to Claude Code and Codex instruction files.",
   "license": "SEE LICENSE IN LICENSE.md",
