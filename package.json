@@ -1,0 +1,42 @@
+{
+  "name": "slaunt-agent-instruction-install",
+  "version": "0.1.0",
+  "description": "Append Slaunt agent instructions to Claude Code and Codex instruction files.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "commonjs",
+  "main": "src/installer.js",
+  "bin": {
+    "slaunt-agent-instruction-install": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "instructions.md",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "node --check bin/cli.js && node --check src/installer.js && node --check test/installer.test.js",
+    "pack:check": "npm pack --dry-run",
+    "test": "node --test"
+  },
+  "keywords": [
+    "agents.md",
+    "claude-code",
+    "codex",
+    "instruction-files",
+    "npx",
+    "slaunt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kerodem/slaunt-agent-instruction-install.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kerodem/slaunt-agent-instruction-install/issues"
+  },
+  "homepage": "https://github.com/kerodem/slaunt-agent-instruction-install"
+}
