@@ -5,7 +5,7 @@ An append-only `npx` installer for Slaunt instructions in Claude Code and Codex.
 ## Install
 
 ```sh
-npx slaunt-agent-instruction-install
+npx slaunt-install
 ```
 
 The default user-level targets are:
