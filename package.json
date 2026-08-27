@@ -1,11 +1,12 @@
 {
   "name": "slaunt-install",
   "version": "0.1.2",
-  "description": "Append Slaunt agent instructions to Claude Code and Codex instruction files.",
+  "description": "A guided, append-only installer for Slaunt instructions in Claude Code and Codex.",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "commonjs",
   "main": "src/installer.js",
   "bin": {
+    "slaunt-install": "bin/cli.js",
     "slaunt-agent-instruction-install": "bin/cli.js"
   },
   "files": [

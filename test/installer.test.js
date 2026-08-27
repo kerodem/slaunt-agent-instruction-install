@@ -5,9 +5,11 @@ const { spawn } = require('node:child_process');
 const fsp = require('node:fs').promises;
 const os = require('node:os');
 const path = require('node:path');
+const { PassThrough, Writable } = require('node:stream');
 const { test } = require('node:test');
 
 const cliPath = path.resolve(__dirname, '..', 'bin', 'cli.js');
+const { main } = require('../bin/cli');
 const {
   END_MARKER,
   START_MARKER,
@@ -38,6 +40,43 @@ function runCli(args, env) {
     });
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
+}
+
+function interactiveIo(inputText, env) {
+  const input = new PassThrough();
+  const outputChunks = [];
+  const errorChunks = [];
+  const answers = inputText.split(/\n/).filter(Boolean).map((answer) => `${answer}\n`);
+  const output = new Writable({
+    write(chunk, encoding, callback) {
+      outputChunks.push(Buffer.from(chunk, encoding));
+      if (String(chunk).includes('Choose ') || String(chunk).includes('Continue and add')) {
+        const answer = answers.shift();
+        if (answer) {
+          queueMicrotask(() => input.write(answer));
+        }
+      }
+      callback();
+    }
+  });
+  const error = new Writable({
+    write(chunk, encoding, callback) {
+      errorChunks.push(Buffer.from(chunk, encoding));
+      callback();
+    }
+  });
+  input.isTTY = true;
+  output.isTTY = true;
+  error.isTTY = true;
+
+  return {
+    env,
+    input,
+    output,
+    error,
+    readOutput: () => Buffer.concat(outputChunks).toString('utf8'),
+    readError: () => Buffer.concat(errorChunks).toString('utf8')
+  };
 }
 
 test('appends after existing bytes and is idempotent', async (t) => {
@@ -142,14 +181,59 @@ test('CLI installs both targets and reports the resolved locations', async (t) =
   assert.match(paths.stdout, new RegExp(`${codexHome}.*target`));
   assert.match(paths.stdout, new RegExp(`${claudeConfig}.*target`));
 
-  const installed = await runCli([], env);
+  const installed = await runCli(['--yes'], env);
   assert.equal(installed.code, 0, installed.stderr);
   assert.match(installed.stdout, /Codex: .*appended/);
   assert.match(installed.stdout, /Claude Code: .*appended/);
 
-  const repeat = await runCli([], env);
+  const repeat = await runCli(['--yes'], env);
   assert.equal(repeat.code, 0, repeat.stderr);
   assert.match(repeat.stdout, /already installed/);
+});
+
+test('CLI guides a terminal user through scope, assistant selection, preview, and confirmation', async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, 'codex-home');
+  const claudeConfig = path.join(directory, 'claude-config');
+  const io = interactiveIo('1\n1\nyes\n', {
+    CODEX_HOME: codexHome,
+    CLAUDE_CONFIG_DIR: claudeConfig
+  });
+
+  const exitCode = await main([], io);
+  assert.equal(exitCode, 0, io.readError());
+  assert.match(io.readOutput(), /Slaunt setup/);
+  assert.match(io.readOutput(), /Here is what will happen/);
+  assert.match(io.readOutput(), /Done\. Slaunt is ready/);
+  assert.match(await fsp.readFile(path.join(codexHome, 'AGENTS.md'), 'utf8'), /slaunt-agent-instruction-install:start/);
+  assert.match(await fsp.readFile(path.join(claudeConfig, 'CLAUDE.md'), 'utf8'), /slaunt-agent-instruction-install:start/);
+});
+
+test('guided confirmation can be declined without creating or changing documents', async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, 'codex-home');
+  const claudeConfig = path.join(directory, 'claude-config');
+  const io = interactiveIo('1\n1\nno\n', {
+    CODEX_HOME: codexHome,
+    CLAUDE_CONFIG_DIR: claudeConfig
+  });
+
+  const exitCode = await main([], io);
+  assert.equal(exitCode, 0, io.readError());
+  assert.match(io.readOutput(), /No files were changed/);
+  await assert.rejects(() => fsp.stat(codexHome), { code: 'ENOENT' });
+  await assert.rejects(() => fsp.stat(claudeConfig), { code: 'ENOENT' });
+});
+
+test('CLI requires explicit confirmation in a non-interactive terminal', async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, 'codex-home');
+  const result = await runCli([], { CODEX_HOME: codexHome });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /No interactive terminal was detected/);
+  assert.match(result.stderr, /--yes/);
+  await assert.rejects(() => fsp.stat(codexHome), { code: 'ENOENT' });
 });
 
 test('refuses to modify a symlink destination', async (t) => {

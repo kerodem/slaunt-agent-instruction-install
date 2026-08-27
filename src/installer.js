@@ -433,7 +433,9 @@ function parseCliArgs(argv) {
     scope: 'user',
     only: 'both',
     dryRun: false,
-    pathsOnly: false
+    pathsOnly: false,
+    yes: false,
+    provided: []
   };
 
   const valueOptions = new Map([
@@ -463,6 +465,10 @@ function parseCliArgs(argv) {
       options.pathsOnly = true;
       continue;
     }
+    if (argument === '--yes' || argument === '-y') {
+      options.yes = true;
+      continue;
+    }
 
     const optionName = argument.split('=', 1)[0];
     const optionKey = valueOptions.get(optionName);
@@ -477,17 +483,18 @@ function parseCliArgs(argv) {
     }
 
     options[optionKey] = optionKey === 'only' ? parseOnly(value) : value;
+    options.provided.push(optionKey);
   }
 
   if (options.scope !== 'user' && options.scope !== 'project') {
     throw new InstallerError('`--scope` accepts `user` or `project`.', 'INVALID_SCOPE');
   }
 
-  if (options.help && (options.version || options.dryRun || options.pathsOnly)) {
+  if (options.help && (options.version || options.dryRun || options.pathsOnly || options.yes)) {
     throw new InstallerError('Do not combine --help with other operational flags.', 'CONFLICTING_OPTIONS');
   }
 
-  if (options.version && (options.dryRun || options.pathsOnly)) {
+  if (options.version && (options.dryRun || options.pathsOnly || options.yes)) {
     throw new InstallerError('Do not combine --version with operational flags.', 'CONFLICTING_OPTIONS');
   }
 
@@ -495,6 +502,19 @@ function parseCliArgs(argv) {
 }
 
 async function installInstructions(options = {}) {
+  const plans = await planInstructions(options);
+  if (options.pathsOnly) {
+    return plans;
+  }
+
+  if (options.dryRun) {
+    return plans.map((plan) => ({ ...plan, status: plan.status === 'append' ? 'would-append' : plan.status }));
+  }
+
+  return applyInstructionPlans(plans);
+}
+
+async function planInstructions(options = {}) {
   const targets = await discoverTargets(options);
   if (options.pathsOnly) {
     return targets.map((target) => ({ ...target, status: 'path-only' }));
@@ -503,12 +523,10 @@ async function installInstructions(options = {}) {
   const instructionBody = options.instructionsText !== undefined
     ? normalizeInstructionText(options.instructionsText, 'inline instructions')
     : await loadInstructions(options.instructionsPath || DEFAULT_INSTRUCTIONS_PATH, options);
-  const plans = await Promise.all(targets.map((target) => planAppend(target, instructionBody)));
+  return Promise.all(targets.map((target) => planAppend(target, instructionBody)));
+}
 
-  if (options.dryRun) {
-    return plans.map((plan) => ({ ...plan, status: plan.status === 'append' ? 'would-append' : plan.status }));
-  }
-
+async function applyInstructionPlans(plans) {
   const results = [];
   for (const plan of plans) {
     if (plan.status === 'append') {
@@ -547,6 +565,8 @@ module.exports = {
   discoverTargets,
   findProjectRoot,
   installInstructions,
+  planInstructions,
+  applyInstructionPlans,
   loadInstructions,
   parseCliArgs,
   resolveInputPath
