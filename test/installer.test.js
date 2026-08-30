@@ -255,6 +255,25 @@ test('refuses to modify a symlink destination', async (t) => {
   assert.equal(await fsp.readFile(realPath, 'utf8'), 'keep me\n');
 });
 
+test('refuses to create a document through a symlink parent directory', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink creation requires elevated privileges on some Windows environments');
+    return;
+  }
+
+  const directory = await temporaryDirectory(t);
+  const realDirectory = path.join(directory, 'real');
+  const linkedDirectory = path.join(directory, 'linked');
+  await fsp.mkdir(realDirectory);
+  await fsp.symlink(realDirectory, linkedDirectory, 'dir');
+
+  await assert.rejects(
+    () => appendInstructionsToFile(path.join(linkedDirectory, 'AGENTS.md'), '# Slaunt'),
+    (error) => error.code === 'SYMLINK_PARENT'
+  );
+  await assert.rejects(() => fsp.stat(path.join(realDirectory, 'AGENTS.md')), { code: 'ENOENT' });
+});
+
 test('refuses invalid UTF-8 and incomplete installer markers without changing the file', async (t) => {
   const directory = await temporaryDirectory(t);
   const invalidPath = path.join(directory, 'invalid.md');

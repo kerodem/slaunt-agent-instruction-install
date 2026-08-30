@@ -123,6 +123,47 @@ async function readSnapshot(filePath) {
   return { stat: finalStat, bytes, text: decodeUtf8(bytes, filePath) };
 }
 
+async function assertSafeParentDirectories(directoryPath) {
+  let current = path.resolve(directoryPath);
+  while (true) {
+    const stat = await lstatIfExists(current);
+    if (stat?.isSymbolicLink()) {
+      // macOS exposes /var (and /tmp on some installations) as root-owned
+      // aliases into /private. Preserve the symlink-parent defense for user
+      // controlled paths while allowing these fixed platform aliases.
+      const trustedMacOsAlias = process.platform === 'darwin'
+        && stat.uid === 0
+        && ((current === '/var' && await resolvesTo(current, '/private/var'))
+          || (current === '/tmp' && await resolvesTo(current, '/private/tmp')));
+      if (trustedMacOsAlias) {
+        const parent = path.dirname(current);
+        if (parent === current) return;
+        current = parent;
+        continue;
+      }
+      throw new InstallerError(
+        `Refusing to create or modify a document through symbolic-link parent directory: ${current}`,
+        'SYMLINK_PARENT'
+      );
+    }
+    if (stat && !stat.isDirectory()) {
+      throw new InstallerError(`Destination parent is not a directory: ${current}`, 'NON_DIRECTORY_PARENT');
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
+async function resolvesTo(filePath, expectedPath) {
+  try {
+    return (await fsp.realpath(filePath)) === expectedPath;
+  } catch {
+    return false;
+  }
+}
+
 function normalizeInstructionText(text, sourcePath = 'instructions') {
   if (typeof text !== 'string') {
     throw new InstallerError(`Instructions from ${sourcePath} must be text.`, 'INVALID_INSTRUCTIONS');
@@ -196,6 +237,7 @@ function renderBlock(body, newline) {
 }
 
 async function planAppend(target, instructionBody) {
+  await assertSafeParentDirectories(path.dirname(target.path));
   const snapshot = await readSnapshot(target.path);
   if (hasCompleteInstallBlock(snapshot.text, target.path)) {
     return {
@@ -239,7 +281,9 @@ async function syncDirectory(directoryPath) {
 
 async function commitAppend(plan) {
   const directoryPath = path.dirname(plan.path);
+  await assertSafeParentDirectories(directoryPath);
   await fsp.mkdir(directoryPath, { recursive: true, mode: plan.directoryMode });
+  await assertSafeParentDirectories(directoryPath);
 
   const current = await readSnapshot(plan.path);
   const unchanged = plan.existingStat
